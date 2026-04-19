@@ -22,8 +22,13 @@ src/
 │       ├── ImageUtil.cs          # scale_to_fit, detect_repeat_token
 │       ├── VllmClient.cs         # Client HTTP OpenAI-compatible (retry su repeat-token)
 │       └── InferenceManager.cs
-└── Chandra.Cli/        # CLI `chandra`
-    └── Program.cs
+├── Chandra.Cli/        # CLI `chandra`
+│   └── Program.cs
+└── Chandra.Api/        # ASP.NET Core Minimal API
+    ├── Program.cs
+    ├── Auth/ApiKeyMiddleware.cs
+    ├── Models/OcrModels.cs
+    └── Services/OcrService.cs
 ```
 
 ## Uso
@@ -36,7 +41,37 @@ dotnet build
 dotnet run --project src/Chandra.Cli -- <input_path> <output_path> \
   --vllm-api-base http://localhost:8000/v1 \
   --vllm-model chandra
+
+# API
+dotnet run --project src/Chandra.Api
+# -> http://localhost:5000 (o come da appsettings/launchSettings)
 ```
+
+### API HTTP
+
+Due endpoint equivalenti, la response è sempre JSON:
+
+```bash
+# Multipart
+curl -X POST http://localhost:5000/api/ocr \
+  -H "X-Api-Key: <key>" \
+  -F "file=@doc.pdf" \
+  -F "format=markdown" \
+  -F "pageRange=1-3"
+
+# JSON + base64
+curl -X POST http://localhost:5000/api/ocr/base64 \
+  -H "X-Api-Key: <key>" \
+  -H "Content-Type: application/json" \
+  -d '{"fileName":"doc.pdf","fileBase64":"<base64>","format":"json"}'
+```
+
+`format` ∈ `json | text | markdown`. La risposta contiene `pages[].base64`, il cui contenuto è:
+- `markdown` — markdown con immagini inline come `data:image/webp;base64,...`
+- `text` — testo puro (immagini omesse)
+- `json` — JSON serializzato per pagina con `chunks[]`, `html`, `markdown` (immagini inline)
+
+Config API (`appsettings.json` → sezione `Api`): `MaxPages`, `RequestTimeoutSeconds`, `MaxUploadBytes`, `IncludeImages`, `AllowedCorsOrigins`. Chiavi API in `Auth:ApiKeys` (lista).
 
 Variabili d'ambiente supportate: `VLLM_API_BASE`, `VLLM_API_KEY`, `VLLM_MODEL_NAME`, `MAX_OUTPUT_TOKENS`, `MAX_VLLM_RETRIES`, `IMAGE_DPI`, `MODEL_CHECKPOINT`.
 

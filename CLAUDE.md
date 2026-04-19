@@ -11,11 +11,12 @@ Only the **vLLM backend** is ported. The upstream HuggingFace local backend (`ch
 ## Commands
 
 ```bash
-dotnet build                                        # build both projects
+dotnet build                                        # build all three projects
 dotnet run --project src/Chandra.Cli -- --help      # CLI usage
 dotnet run --project src/Chandra.Cli -- <input> <output> \
   --vllm-api-base http://localhost:8000/v1 \
   --vllm-model chandra
+dotnet run --project src/Chandra.Api                # ASP.NET Core API (reads appsettings.json)
 ```
 
 No tests yet. No linter configured beyond the .NET SDK default analyzers.
@@ -81,3 +82,14 @@ File(s) ──► FileLoader ──► Image<Rgb24>[]  (one per page)
 - **PDF rendering is not thread-safe.** `PDFtoImage`/PDFium serializes all calls internally. Page loading in `FileLoader.LoadPdfImages` is intentionally sequential; parallelism happens only downstream in `VllmClient` (per-request `SemaphoreSlim`).
 
 - **Markdown converter is hand-rolled**, not a port of `markdownify`. Tables are emitted as raw HTML (matching upstream behavior). `<math display="block">` → `$$...$$`; inline `<math>` → `$...$`. If you add an HTML tag to the prompt's allowed list, also teach `MarkdownConverter.ConvertNode` how to handle it.
+
+## Chandra.Api — the HTTP layer
+
+Minimal API (`src/Chandra.Api`) wrapping `InferenceManager` as a singleton. Two endpoints accept the same work: `POST /api/ocr` (multipart with `file`) and `POST /api/ocr/base64` (JSON body with `fileBase64`). Both go through `OcrService.ProcessAsync` which writes the upload to a temp file, because `FileLoader` works on paths (PDFium needs a seekable source).
+
+- **Response shape is invariant.** Always `OcrResponse { fileName, format, totalPages, totalTokens, pages[] }`. Each `PageResult.Base64` holds the actual payload encoded in the requested format — this is by design (the user wanted one stable wire format).
+- **Format dispatch** happens in `OcrService.BuildPageResult`: `markdown` → `ImageEmbedder.InlineMarkdownImages`, `json` → `ToChunksJson` (serialized chunks + inlined html/markdown), `text` → `ToPlainText` (HTML → `InnerText`, images stripped because they can't be meaningfully inlined in plain text).
+- **Image inlining matters.** Core pipeline emits `<img src="<hash>_<idx>_img.webp">` (see `HtmlParser.GetImageName`) and a parallel `BatchOutputItem.Images` dictionary keyed by the same name. `ImageEmbedder` is what reconnects them as `data:image/webp;base64,...` URIs. If you change the image naming scheme in `HtmlParser`, update the regex in `ImageEmbedder`.
+- **Auth.** `ApiKeyMiddleware` checks `X-Api-Key` against `Auth:ApiKeys` in config. Paths in `Auth:BypassPaths` skip the check (default: `/health`, `/openapi`, `/swagger`). If `ApiKeys` is empty the middleware returns 500 — misconfigured server, not unauthenticated — so production configs *must* set at least one key.
+- **Hard limits** (config `Api:` section): `MaxPages` (rejected in `OcrService` before inference), `RequestTimeoutSeconds` (linked CTS per request), `MaxUploadBytes` (applied to both Kestrel `MaxRequestBodySize` and `FormOptions.MultipartBodyLengthLimit`).
+- **vLLM is pinned to config**, never overridable per request. The API reads the `Chandra` section of `appsettings.json` into `Settings` and registers it as a singleton.
