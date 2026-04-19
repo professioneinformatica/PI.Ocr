@@ -1,0 +1,30 @@
+## .NET
+bin/
+obj/
+out/
+*.user
+*.suo
+*.userprefs
+*.swp
+.vs/
+.vscode/
+.idea/
+
+## Build
+*.dll
+*.exe
+*.pdb
+*.cache
+project.lock.json
+project.assets.json
+*.nuget.props
+*.nuget.targets
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Env
+*.env
+local.env
+.env.local
