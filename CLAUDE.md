@@ -1,0 +1,83 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A .NET 8 port of the Python project [datalab-to/chandra](https://github.com/datalab-to/chandra/tree/master/chandra). It converts PDFs and images into HTML/Markdown/JSON **with layout information** by delegating the OCR to a vLLM server that exposes an OpenAI-compatible `/chat/completions` endpoint and serves the `chandra-ocr-2` vision model.
+
+Only the **vLLM backend** is ported. The upstream HuggingFace local backend (`chandra/model/hf.py`) is intentionally omitted — it requires Python + Torch and has no clean .NET equivalent.
+
+## Commands
+
+```bash
+dotnet build                                        # build both projects
+dotnet run --project src/Chandra.Cli -- --help      # CLI usage
+dotnet run --project src/Chandra.Cli -- <input> <output> \
+  --vllm-api-base http://localhost:8000/v1 \
+  --vllm-model chandra
+```
+
+No tests yet. No linter configured beyond the .NET SDK default analyzers.
+
+Environment variables (override `Settings` defaults): `VLLM_API_BASE`, `VLLM_API_KEY`, `VLLM_MODEL_NAME`, `MAX_OUTPUT_TOKENS`, `MAX_VLLM_RETRIES`, `IMAGE_DPI`, `MODEL_CHECKPOINT`.
+
+## Architecture: the end-to-end pipeline
+
+The whole system is a single linear pipeline. Understanding that pipeline is the key to being productive here — individual files are thin.
+
+```
+File(s) ──► FileLoader ──► Image<Rgb24>[]  (one per page)
+                                │
+                                ▼
+                         ImageUtil.ScaleToFit   (grid-aligned 28×28 blocks, pixel-budget clamp)
+                                │
+                                ▼
+                         VllmClient   ── POST /chat/completions  ──► raw HTML string
+                    (base64 PNG + OCR_LAYOUT_PROMPT)              ◄── retry on repeat-token
+                                │
+                                ▼
+             ┌──── HtmlParser.ParseChunks  ──► List<LayoutBlock>
+ raw HTML ───┼──── HtmlParser.ParseHtml    ──► cleaned HTML
+             ├──── MarkdownConverter       ──► Markdown
+             └──── HtmlParser.ExtractImages──► Dictionary<name, Image<Rgb24>>
+                                │
+                                ▼
+                         BatchOutputItem   (assembled by InferenceManager)
+                                │
+                                ▼
+                         Chandra.Cli.SaveMergedOutput
+                                │
+                                ▼
+             <output>/<stem>/{<stem>.md, <stem>.html, <stem>_metadata.json, *_img.webp}
+```
+
+`InferenceManager.GenerateAsync` is the single orchestration seam. Everything above it is IO/prep; everything below it is HTML post-processing.
+
+## Things that are non-obvious
+
+- **Prompt contract, not code contract.** The model is instructed (in `Prompts.cs`) to emit HTML where each top-level `<div>` has `data-bbox="x0 y0 x1 y1"` (normalized 0–`BboxScale`, default 1000) and `data-label="<block-type>"`. `HtmlParser.ParseLayout` rescales bboxes from that normalized space into actual pixel coordinates of the *scaled* image (not the original). If you change the prompt, the parser must change too.
+
+- **Image scaling is load-bearing.** `ImageUtil.ScaleToFit` aligns to a 28-pixel grid (the Qwen-family vision patch size) and enforces `(3072, 2048)` pixel-budget max. Pages are scaled *before* being sent to the model — the bbox coordinates the model returns are relative to that scaled image, so `ExtractImages` crops from the scaled image, not the original.
+
+- **Retry policy is tuned to a failure mode.** `VllmClient.ShouldRetry` calls `ImageUtil.DetectRepeatToken` on the model output — the model occasionally loops and emits a repeating tail. Retries bump temperature (up to 0.8) and top_p (to 0.95) to break the loop. That's why temperature defaults to 0.0 on first try.
+
+- **`Prompts` name-resolution quirk.** The root namespace is `Chandra.Ocr` and there's also a top-level class `Prompts` in it. From inside `Chandra.Ocr.Model`, `Prompts` does not resolve — use `global::Chandra.Ocr.Prompts` (see `VllmClient.GenerateOneAsync`).
+
+- **Python parity mapping** (useful when porting bug fixes from upstream):
+
+  | Python                        | .NET                                            |
+  |-------------------------------|-------------------------------------------------|
+  | `chandra/settings.py`         | `Settings.cs`                                   |
+  | `chandra/prompts.py`          | `Prompts.cs`                                    |
+  | `chandra/input.py`            | `Input/FileLoader.cs`                           |
+  | `chandra/output.py`           | `Output/HtmlParser.cs` + `MarkdownConverter.cs` |
+  | `chandra/model/schema.py`     | `Model/Schema.cs`                               |
+  | `chandra/model/util.py`       | `Model/ImageUtil.cs`                            |
+  | `chandra/model/vllm.py`       | `Model/VllmClient.cs`                           |
+  | `chandra/model/__init__.py`   | `Model/InferenceManager.cs`                     |
+  | `chandra/scripts/cli.py`      | `Chandra.Cli/Program.cs`                        |
+
+- **PDF rendering is not thread-safe.** `PDFtoImage`/PDFium serializes all calls internally. Page loading in `FileLoader.LoadPdfImages` is intentionally sequential; parallelism happens only downstream in `VllmClient` (per-request `SemaphoreSlim`).
+
+- **Markdown converter is hand-rolled**, not a port of `markdownify`. Tables are emitted as raw HTML (matching upstream behavior). `<math display="block">` → `$$...$$`; inline `<math>` → `$...$`. If you add an HTML tag to the prompt's allowed list, also teach `MarkdownConverter.ConvertNode` how to handle it.
