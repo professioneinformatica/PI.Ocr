@@ -1,6 +1,21 @@
 @Chandra.Api_HostAddress = http://localhost:5140
+@ApiKey = dev-api-key-change-me
 
-GET {{Chandra.Api_HostAddress}}/weatherforecast/
+### Health
+GET {{Chandra.Api_HostAddress}}/health
 Accept: application/json
+
+### OCR – base64 JSON body
+POST {{Chandra.Api_HostAddress}}/api/ocr/base64
+X-Api-Key: {{ApiKey}}
+Content-Type: application/json
+
+{
+  "fileName": "sample.pdf",
+  "fileBase64": "<base64-encoded file>",
+  "format": "markdown",
+  "pageRange": "1-3",
+  "includeHeadersFooters": false
+}
 
 ###

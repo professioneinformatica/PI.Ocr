@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A .NET 8 port of the Python project [datalab-to/chandra](https://github.com/datalab-to/chandra/tree/master/chandra). It converts PDFs and images into HTML/Markdown/JSON **with layout information** by delegating the OCR to a vLLM server that exposes an OpenAI-compatible `/chat/completions` endpoint and serves the `chandra-ocr-2` vision model.
+A .NET 10 port of the Python project [datalab-to/chandra](https://github.com/datalab-to/chandra/tree/master/chandra). It converts PDFs and images into HTML/Markdown/JSON **with layout information** by delegating the OCR to a vLLM server that exposes an OpenAI-compatible `/chat/completions` endpoint and serves the `chandra-ocr-2` vision model.
 
 Only the **vLLM backend** is ported. The upstream HuggingFace local backend (`chandra/model/hf.py`) is intentionally omitted — it requires Python + Torch and has no clean .NET equivalent.
 

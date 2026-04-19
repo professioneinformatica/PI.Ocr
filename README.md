@@ -1,28 +1,28 @@
 # Chandra OCR (.NET)
 
-Porta in .NET 8 del progetto Python [datalab-to/chandra](https://github.com/datalab-to/chandra/tree/master/chandra).
+.NET 10 port of the Python project [datalab-to/chandra](https://github.com/datalab-to/chandra/tree/master/chandra).
 
-Converte PDF e immagini in HTML/Markdown/JSON con informazioni di layout, interrogando un server vLLM compatibile con l'API OpenAI che serve il modello `chandra-ocr-2`.
+Converts PDFs and images to HTML/Markdown/JSON with layout information by calling a vLLM server that exposes an OpenAI-compatible API and serves the `chandra-ocr-2` model.
 
-> Nota: è implementato solo il backend **vLLM** (HTTP OpenAI-compatible). Il backend HuggingFace locale del progetto originale richiede Python + Torch e non è portabile come tale in .NET puro.
+> Note: only the **vLLM** backend is implemented (HTTP, OpenAI-compatible). The upstream local HuggingFace backend requires Python + Torch and cannot be ported as-is to pure .NET.
 
-## Struttura della solution
+## Solution layout
 
 ```
 Chandra.sln
 src/
-├── Chandra.Ocr/        # Libreria core (input, output, modello, prompt)
+├── Chandra.Ocr/        # Core library (input, output, model, prompts)
 │   ├── Settings.cs
 │   ├── Prompts.cs
-│   ├── Input/FileLoader.cs       # PDF→immagini (PDFium via PDFtoImage) + immagini
+│   ├── Input/FileLoader.cs       # PDF → images (PDFium via PDFtoImage) + images
 │   ├── Output/HtmlParser.cs      # parse_html, parse_layout, parse_chunks, extract_images
 │   ├── Output/MarkdownConverter.cs
 │   └── Model/
 │       ├── Schema.cs             # BatchInputItem / GenerationResult / LayoutBlock / BatchOutputItem
 │       ├── ImageUtil.cs          # scale_to_fit, detect_repeat_token
-│       ├── VllmClient.cs         # Client HTTP OpenAI-compatible (retry su repeat-token)
+│       ├── VllmClient.cs         # OpenAI-compatible HTTP client (retry on repeat-token)
 │       └── InferenceManager.cs
-├── Chandra.Cli/        # CLI `chandra`
+├── Chandra.Cli/        # `chandra` CLI
 │   └── Program.cs
 └── Chandra.Api/        # ASP.NET Core Minimal API
     ├── Program.cs
@@ -31,7 +31,7 @@ src/
     └── Services/OcrService.cs
 ```
 
-## Uso
+## Usage
 
 ```bash
 # Build
@@ -44,12 +44,12 @@ dotnet run --project src/Chandra.Cli -- <input_path> <output_path> \
 
 # API
 dotnet run --project src/Chandra.Api
-# -> http://localhost:5000 (o come da appsettings/launchSettings)
+# -> http://localhost:5000 (or whatever appsettings/launchSettings says)
 ```
 
-### API HTTP
+### HTTP API
 
-Due endpoint equivalenti, la response è sempre JSON:
+Two equivalent endpoints; the response is always JSON:
 
 ```bash
 # Multipart
@@ -66,16 +66,16 @@ curl -X POST http://localhost:5000/api/ocr/base64 \
   -d '{"fileName":"doc.pdf","fileBase64":"<base64>","format":"json"}'
 ```
 
-`format` ∈ `json | text | markdown`. La risposta contiene `pages[].base64`, il cui contenuto è:
-- `markdown` — markdown con immagini inline come `data:image/webp;base64,...`
-- `text` — testo puro (immagini omesse)
-- `json` — JSON serializzato per pagina con `chunks[]`, `html`, `markdown` (immagini inline)
+`format` ∈ `json | text | markdown`. The response carries `pages[].base64`, whose decoded content is:
+- `markdown` — markdown with images inlined as `data:image/webp;base64,...`
+- `text` — plain text (images stripped)
+- `json` — per-page serialized JSON with `chunks[]`, `html`, `markdown` (images inlined)
 
-Config API (`appsettings.json` → sezione `Api`): `MaxPages`, `RequestTimeoutSeconds`, `MaxUploadBytes`, `IncludeImages`, `AllowedCorsOrigins`. Chiavi API in `Auth:ApiKeys` (lista).
+API config (`appsettings.json` → `Api` section): `MaxPages`, `RequestTimeoutSeconds`, `MaxUploadBytes`, `IncludeImages`, `AllowedCorsOrigins`. API keys under `Auth:ApiKeys` (array).
 
-Variabili d'ambiente supportate: `VLLM_API_BASE`, `VLLM_API_KEY`, `VLLM_MODEL_NAME`, `MAX_OUTPUT_TOKENS`, `MAX_VLLM_RETRIES`, `IMAGE_DPI`, `MODEL_CHECKPOINT`.
+Supported environment variables: `VLLM_API_BASE`, `VLLM_API_KEY`, `VLLM_MODEL_NAME`, `MAX_OUTPUT_TOKENS`, `MAX_VLLM_RETRIES`, `IMAGE_DPI`, `MODEL_CHECKPOINT`.
 
-## Mappa Python → .NET
+## Python → .NET map
 
 | Python                        | .NET                                            |
 |-------------------------------|-------------------------------------------------|
@@ -88,19 +88,19 @@ Variabili d'ambiente supportate: `VLLM_API_BASE`, `VLLM_API_KEY`, `VLLM_MODEL_NA
 | `chandra/model/vllm.py`       | `Model/VllmClient.cs`                           |
 | `chandra/model/__init__.py`   | `Model/InferenceManager.cs`                     |
 | `chandra/scripts/cli.py`      | `Chandra.Cli/Program.cs`                        |
-| `chandra/model/hf.py`         | (non portato)                                   |
+| `chandra/model/hf.py`         | (not ported)                                    |
 
-## Output per documento
+## Per-document output
 
-Per ogni file processato viene creata una sottocartella `<output>/<nome>/` contenente:
-- `<nome>.md` – Markdown concatenato
-- `<nome>.html` – HTML concatenato
-- `<nome>_metadata.json` – metadati (pagine, token, chunks, immagini)
-- `<hash>_<idx>_img.webp` – immagini estratte dai blocchi `Image`/`Figure`
+For each processed file a `<output>/<name>/` sub-directory is created containing:
+- `<name>.md` — concatenated Markdown
+- `<name>.html` — concatenated HTML
+- `<name>_metadata.json` — metadata (pages, tokens, chunks, images)
+- `<hash>_<idx>_img.webp` — images extracted from `Image`/`Figure` blocks
 
-## Dipendenze principali
+## Main dependencies
 
-- `SixLabors.ImageSharp` / `ImageSharp.Drawing` – manipolazione immagini
-- `PDFtoImage` (PDFium + SkiaSharp) – rendering PDF
-- `HtmlAgilityPack` – parsing HTML
-- `System.CommandLine` – CLI
+- `SixLabors.ImageSharp` / `ImageSharp.Drawing` — image manipulation
+- `PDFtoImage` (PDFium + SkiaSharp) — PDF rendering
+- `HtmlAgilityPack` — HTML parsing
+- `System.CommandLine` — CLI
